@@ -2,6 +2,8 @@ import csv
 import logging
 import pandas as pd
 import sys
+from bs4 import BeautifulSoup
+import re
 
 from random import randint
 from selenium import webdriver
@@ -27,13 +29,16 @@ logger.addHandler(handler)
 BASE_FILE = "/home/pi/repos/fa_scrapper/final_movies.csv"
 SCRAPPED_DATA = "/home/pi/repos/fa_scrapper/imdb_films_scrapped.csv"
 WEB_ADDRESS = 'https://www.imdb.com/title/'
+RELATED_LINKS_DATA = "/home/pi/repos/fa_scrapper/extra_links.csv"
 
 old_df = pd.read_csv(BASE_FILE, sep=',')
 old_df["ind"] = old_df.titleId
 old_df = old_df.set_index("ind")
-imdb_id = old_df[old_df["captured"] == 0].iloc[0, 0]
-
-
+try:
+    imdb_id = old_df[old_df["captured"] == 0].iloc[0, 0]
+except IndexError:
+    print("No more links to see")
+    sys.exit(0)
 try:
     f = open('/home/pi/imdb_scrapper.log', 'r')
     txt = f.read()
@@ -57,6 +62,18 @@ driver.get(WEB_ADDRESS + imdb_id)
 
 sleep(4 + randint(0, 4))
 
+html_soup = BeautifulSoup(driver.page_source, 'html.parser').find_all('a')
+realted_ids = list(set(re.findall("/title/tt\d\d\d\d\d\d\d", str(html_soup))))
+related_links_id = [i[7:] for i in realted_ids]
+
+related_links_id.remove(imdb_id)
+
+
+with open(RELATED_LINKS_DATA, 'a', newline='') as f:
+    writer = csv.writer(f, delimiter=";")
+    for link_id in related_links_id:
+        writer.writerow([link_id])
+
 logger.info("Scrapping all movie characteristics...")
 title_scrapped = driver.find_element_by_class_name("title_wrapper").text.split("\n")
 if len(title_scrapped) == 3:
@@ -68,8 +85,17 @@ elif len(title_scrapped) == 1:
 else:
     title, characteristics = title_scrapped
     title_original = "None"
-rating, votes, _ = driver.find_element_by_class_name("ratings_wrapper").text.split("\n")
-year = driver.find_element_by_id("titleYear").text[1:-1]
+
+ratings_wrapper = driver.find_element_by_class_name("ratings_wrapper").text.split("\n")
+if len(ratings_wrapper) == 3:
+    rating, votes, _ = ratings_wrapper
+else:
+    rating = ratings_wrapper
+    votes = 0
+try:
+    year = driver.find_element_by_id("titleYear").text[1:-1]
+except NoSuchElementException:
+    year = 0
 try:
     direction = driver.find_element_by_class_name("credit_summary_item").text
 except NoSuchElementException:
@@ -117,6 +143,12 @@ if len(characteristics_list) == 2:
     characteristics_list = ["Unknown"] + characteristics_list
 elif len(characteristics_list) == 1:
     characteristics_list = ["Unknown"] + characteristics_list + ["Unknown"]
+
+if len(critic_data.split(" ")) == 2:
+    if critic_data.split(" ")[1] == "critic":
+        critic_data = "-1 user | " + critic_data
+    if critic_data.split(" ")[1] == "user":
+        critic_data = critic_data + "| -1 critic"
 
 fields = [imdb_id, title.split("(")[0].strip(), title_original.split("(")[0].strip(), year,
           characteristics_list[0].strip(), characteristics_list[1].strip(), characteristics_list[2].strip(),
